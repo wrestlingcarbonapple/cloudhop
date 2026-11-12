@@ -117,3 +117,20 @@ def test_paused_run_resumes_and_skips_verified_work(env, monkeypatch):
     assert run.d["status"] == "succeeded", run.log_tail()
     assert "Already verified in an earlier attempt" in "\n".join(run.log_tail())
     assert len(files(tmp / "src" / "_done")) == 5
+
+
+def test_verify_while_copying_when_no_common_hash(env, monkeypatch):
+    tmp, jobs, runs = env
+    # Like OneDrive (quickxor only) -> Google Drive (md5 only): copy through a hasher overlay
+    monkeypatch.setattr(runs.rclone, "hashes", lambda fs: ["quickxor"] if "src" in fs else ["md5"])
+    job = jobs.save({"name": "h", "source": str(tmp / "src"), "destination": str(tmp / "dst"),
+                     "verify": "content", "batch_by_folder": True})
+    run = wait(runs, runs.start(job["id"]))
+    log = "\n".join(Path(run.folder / "log.txt").read_text().splitlines())
+    assert run.d["status"] == "succeeded", run.log_tail()
+    assert "recorded while copying" in log
+    assert "rclone copy cloudhophash" in log            # copies went through the overlay
+    assert "checking by download" not in log and "--download" not in log
+    assert sum(u["files"] for u in run.d["units"]) == 5
+    # The user's rclone config was not touched
+    assert not (tmp / "data" / "rclone.conf").exists() or "hasher" not in (tmp / "data" / "rclone.conf").read_text()

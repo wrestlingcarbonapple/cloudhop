@@ -10,6 +10,7 @@ A full storage account pauses the run until the user frees space and resumes it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -390,6 +391,7 @@ class RunManager:
                 run.save(force=True)
             if job["scan_sizes"]:
                 threading.Thread(target=self._scan_sizes, args=(run,), daemon=True).start()
+            self._plan_hasher(run)
             failed = 0
             for unit in run.d["units"]:
                 if unit["status"] == "done":
@@ -510,7 +512,8 @@ class RunManager:
         for p in pairs:
             run.set_unit(unit, phase="transfer", detail=p["label"])
             cmd = "copy" if p["label"] != "main" else job["mode"]
-            args = [cmd, src, p["dst"], *unit["scope"], *p["filters"], *transfer_flags(job)]
+            args = [cmd, self._copy_source(run, unit, src), p["dst"], *unit["scope"], *p["filters"],
+                    *transfer_flags(job)]
             if cmd == "move" and not is_top_root:
                 args.append("--delete-empty-src-dirs")
             if job["only_new"]:
@@ -583,6 +586,37 @@ class RunManager:
         run.set_unit(unit, status="done", phase="", detail=detail)
         run.save(force=True)
 
+    def _plan_hasher(self, run: Run) -> None:
+        """Verify-while-copying for sources and destinations without a common checksum.
+
+        Example: OneDrive only has QuickXorHash, Google Drive only MD5/SHA-1. Copying
+        through rclone's hasher overlay records each file's MD5 as it streams past, so
+        verification compares checksums instead of downloading every file again.
+        The overlay is defined through environment variables: the user's config is untouched.
+        """
+        run.hasher, run.env = None, {}
+        job = run.d["job"]
+        if job["verify"] != "content" or job["mode"] == "move":
+            return
+        src_h = self.rclone.hashes(job["source"])
+        dests = [job["destination"]] + [r["destination"] for r in job["routes"]]
+        dst_hs = [self.rclone.hashes(d) for d in dests]
+        if all(set(src_h) & set(h) for h in dst_hs):
+            return  # a common checksum already exists everywhere
+        usable = [h for h in ("md5", "sha1") if all(h in d for d in dst_hs)]
+        if not usable:
+            return  # the destination has no checksum the hasher can produce
+        # One overlay name per source, so cached checksums of different sources never mix
+        name = "cloudhophash" + hashlib.sha1(job["source"].encode()).hexdigest()[:10]
+        prefix = f"RCLONE_CONFIG_{name.upper()}_"
+        run.env = {prefix + "TYPE": "hasher", prefix + "REMOTE": job["source"],
+                   prefix + "HASHES": usable[0], prefix + "MAX_AGE": "off"}
+        run.hasher = name
+        run.log(f"Verifying with {usable[0]} recorded while copying (no common checksum between the two sides)")
+
+    def _copy_source(self, run: Run, unit: dict, src: str) -> str:
+        return join(f"{run.hasher}:", unit["path"]) if getattr(run, "hasher", None) else src
+
     def _verify(self, run: Run, unit: dict, src: str, p: dict, matched: Path) -> int:
         job = run.d["job"]
         base = [*unit["scope"], *p["filters"], "--one-way", "--match", str(matched)]
@@ -590,6 +624,14 @@ class RunManager:
             base += ["--tpslimit", str(job["tpslimit"])]
         if job["verify"] == "size":
             return self._rclone(run, unit, ["check", src, p["dst"], "--size-only", *base])[0]
+        if getattr(run, "hasher", None):
+            # Checksums recorded while copying against the destination's own: no download
+            code, _ = self._rclone(run, unit, ["check", self._copy_source(run, unit, src), p["dst"], *base])
+            unchecked = _count(run.notices, "hashes could not be checked")
+            if _count(run.notices, "differences found") or (code == 0 and not unchecked):
+                return code
+            # Files without a recorded checksum (e.g. copied earlier) are checked the slow way
+            run.log(f"{unchecked or 'Some'} file(s) have no recorded checksum; checking by download instead")
         src_h, dst_h = self.rclone.hashes(src), self.rclone.hashes(p["dst"])
         common = [h for h in src_h if h in dst_h]
         if common:
@@ -619,8 +661,10 @@ class RunManager:
         run.log("$ rclone " + " ".join(_quote(a) for a in args))
         run.last_error = None
         run.quota_error = None
+        run.notices = []
+        env = {**os.environ, **run.env} if getattr(run, "env", None) else None
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                                encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+                                encoding="utf-8", errors="replace", creationflags=NO_WINDOW, env=env)
         run.proc = proc
         prev_bytes = 0
         final = None
@@ -647,6 +691,8 @@ class RunManager:
             level = entry.get("level", "info").upper()
             obj = entry.get("object")
             msg = entry.get("msg", "").strip()
+            if level == "NOTICE":
+                run.notices.append(msg)
             if level in ("ERROR", "CRITICAL"):
                 run.last_error = f"{obj}: {msg}" if obj else msg
                 if QUOTA_RE.search(msg):
@@ -669,6 +715,15 @@ class RunManager:
     @staticmethod
     def _last_error(run: Run) -> str:
         return getattr(run, "last_error", None) or ""
+
+
+def _count(messages: list[str], phrase: str) -> int:
+    """Number in rclone summary lines like '12 differences found' (0 when absent)."""
+    for msg in reversed(messages or []):
+        m = re.search(r"(\d+) " + re.escape(phrase), msg)
+        if m:
+            return int(m.group(1))
+    return 0
 
 
 def _quote(arg: str) -> str:

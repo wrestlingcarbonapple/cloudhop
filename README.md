@@ -131,7 +131,7 @@ uv run pytest             # tests; the end-to-end ones need rclone on PATH
 - **Zero runtime dependencies:** only the Python standard library (3.10+). The UI is plain HTML/CSS/JS with no build step and no CDN, so it works offline.
 - **rclone** is found in `<data dir>/bin`, then on `PATH`. If it isn't there, the latest official release is downloaded from downloads.rclone.org and checked against the published SHA-256 checksum.
 - **Each job step** is an rclone command run with `--use-json-log`. Live stats come from its JSON log stream.
-- **Content verification** uses `rclone check` when both sides share a hash. Otherwise the source's native hashes are compared against the downloaded destination (`hashsum` + `checksum --download`).
+- **Content verification** uses `rclone check` when both sides share a hash. When they don't (e.g. OneDrive → Google Drive), copies go through a temporary [hasher](https://rclone.org/hasher/) overlay, defined via environment variables so the user's config isn't touched. It records MD5/SHA-1 while streaming, so the check needs no second download. Files without a recorded hash fall back to `hashsum` + `checksum --download`.
 - **The web server** only listens on `127.0.0.1` by default. Every API call needs the access token printed at startup.
 
 | File | What it does |

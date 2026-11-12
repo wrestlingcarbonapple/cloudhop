@@ -455,7 +455,7 @@ async function viewJobEdit(id) {
     ${radio("mode", "move", job.mode, "Move", "Copies files and then deletes them from the source. No separate verification step.")}
   </div>
   <div class="card" id="sec-verify"><h2>3. Check the copies</h2>
-    ${radio("verify", "content", job.verify, "Check the content (safest)", "Compares checksums, so even a single wrong byte is found. When the two services don't share a checksum type, the destination files are downloaded once to check them; that takes extra time.")}
+    ${radio("verify", "content", job.verify, "Check the content (safest)", "Compares checksums, so even a single wrong byte is found. When the two services use different checksum types (like OneDrive and Google Drive), cloudhop records checksums while copying, so checking is quick and nothing is downloaded twice.")}
     ${radio("verify", "size", job.verify, "Check sizes only (fast)", "Confirms every file exists with the right size.")}
     ${radio("verify", "none", job.verify, "Don't check", "Trust the copy step.")}
     <div id="after-verify"><h3>After a file is checked</h3>
