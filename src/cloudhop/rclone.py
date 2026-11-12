@@ -220,6 +220,11 @@ class Rclone:
             pass  # not every backend reports quota
         return result
 
+    def about(self, path: str) -> dict:
+        """Quota of the connection a path is on (not every backend reports it)."""
+        remote = path.split(":", 1)[0] + ":" if ":" in path else path
+        return self.run_json("about", remote, "--json", timeout=60)
+
     def browse(self, path: str) -> list[dict]:
         if ":" not in path:
             raise RcloneError("Path must look like remote:folder")

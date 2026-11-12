@@ -100,6 +100,8 @@ Your connections, jobs and history are kept between starts.
 
 **A storage account is full.** cloudhop pauses the job and tells you which account to free space in. Some services keep deleted files in a recycle bin that still uses space. When there's room again, press **Resume**. Files that were already checked aren't checked again.
 
+**Moving or deleting originals can need free space.** Moving files within an account is normally free. But accounts with a *retention policy* (common for Microsoft 365 work or school accounts) keep a copy of every moved or deleted file. Then *“Move the original to an ‘already copied’ folder”* and *“Delete the original”* need free space of about twice the size of what's moved. cloudhop warns about this when you set up the job, shows how much space the source has left, and pauses the job if the account fills up. If in doubt, choose *“Leave the original where it is”*.
+
 **Work or school accounts (Microsoft 365, Google Workspace).** If the login says “Need admin approval”, your IT department has to allow rclone first. Also check that copying work files to a private account is allowed.
 
 **Keep the computer awake.** cloudhop asks the computer not to go to sleep while a job runs (you can turn this off in Settings). Shutting down or closing the lid still stops it. The job continues the next time you start cloudhop.

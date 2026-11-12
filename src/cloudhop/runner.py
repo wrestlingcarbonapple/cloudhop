@@ -566,7 +566,7 @@ class RunManager:
         if job["tpslimit"]:
             args += ["--tpslimit", str(job["tpslimit"])]
         code, _ = self._rclone(run, unit, args)
-        self._check_quota(run, code, src)
+        self._check_quota(run, code, src, action)
         if code in FATAL_EXIT:
             raise StopRun(f"rclone stopped while trying to {action} files: {self._last_error(run)}")
         if code != 0:
@@ -705,12 +705,20 @@ class RunManager:
         return proc.returncode, final
 
     @staticmethod
-    def _check_quota(run: Run, code: int, where: str) -> None:
+    def _check_quota(run: Run, code: int, where: str, action: str | None = None) -> None:
         if code != 0 and getattr(run, "quota_error", None):
             remote = where.split(":", 1)[0] if ":" in where else where
+            hint = ""
+            if action in ("archive", "delete"):
+                # Moves/deletes are normally free, unless the account keeps a copy of every
+                # moved or deleted file (e.g. a Microsoft 365 retention policy)
+                hint = (f" Moving or deleting files is usually free, but some accounts (for example "
+                        f"Microsoft 365 with a retention policy) keep a copy of every moved or deleted "
+                        f"file, which can need about twice the space. If that's the case, edit the job "
+                        f"and choose 'Leave the original where it is'.")
             raise NeedsAttention(
                 f"The storage on '{remote}' is full ({run.quota_error}). Free up some space there "
-                f"(or empty its recycle bin), then press Resume. Work already verified is kept.")
+                f"(or empty its recycle bin), then press Resume. Work already verified is kept.{hint}")
 
     @staticmethod
     def _last_error(run: Run) -> str:

@@ -463,6 +463,7 @@ async function viewJobEdit(id) {
       ${radio("after_verify", "archive", job.after_verify, "Move the original to an “already copied” folder", "Shows clearly what's done. The folder must be on the same connection as the source.")}
       <div id="archive-box">${pathField("archive_to", "“Already copied” folder", job.archive_to, "For example <span class=mono>onedrive:_migrated</span>.")}</div>
       ${radio("after_verify", "delete", job.after_verify, "Delete the original", "Frees space at the source. <b>The checked copy becomes the only copy.</b> Some services keep deleted files in a recycle bin that still uses space.")}
+      <div id="space-note"></div>
     </div>
   </div>
   <div class="card"><h2>4. Which files</h2>
@@ -562,6 +563,7 @@ function syncJobForm() {
   if (move) f.querySelector("[name=verify][value=none]").checked = true;
   $("#after-verify").style.display = move || f.querySelector("[name=verify]:checked").value === "none" || val.mode !== "copy" ? "none" : "";
   $("#archive-box").style.display = val.after_verify === "archive" ? "" : "none";
+  spaceNote(val);
   const t = val.schedule.type;
   $(".sched-interval", f).style.display = t === "interval" ? "" : "none";
   $(".sched-time", f).style.display = t === "daily" || t === "weekly" ? "" : "none";
@@ -573,6 +575,39 @@ function syncJobForm() {
       $("#sched-preview").textContent = next.length ? "Next runs: " + next.map(when).join(" · ") : "";
     } catch (e) { $("#sched-preview").textContent = e.message; }
   }, 300);
+}
+
+/* Moving/deleting at the source is normally free, but some accounts keep a copy of
+   every moved or deleted file (e.g. Microsoft 365 retention policies): warn, and show
+   how much room the source has. */
+const ABOUT = {};
+async function spaceNote(val) {
+  const box = $("#space-note");
+  if (!box) return;
+  const shown = $("#after-verify").style.display !== "none";
+  if (!shown || !["archive", "delete"].includes(val.after_verify)) { box.innerHTML = ""; return; }
+  const remote = val.source.includes(":") ? val.source.split(":")[0] + ":" : "";
+  const word = val.after_verify === "archive" ? "Moving" : "Deleting";
+  const render = info => {
+    let free = "";
+    if (info && info.free != null) {
+      free = `<div style="margin-top:6px"><b style="display:inline">${esc(remote)}</b> has <b style="display:inline">${B(info.free)}</b> free right now`
+        + (info.total ? ` (of ${B(info.total)})` : "") + `.` + (info.free < 5e9 ? " That's very little: a retention policy would make this step stop almost immediately." : "") + `</div>`;
+    } else if (info && info.error) {
+      free = `<div class="muted" style="margin-top:6px">Couldn't read the free space of ${esc(remote)}: ${esc(info.error)}</div>`;
+    }
+    box.innerHTML = `<div class="banner warn small"><b>Check the free space on the source first</b>
+      ${word} files is usually free, but some accounts keep a copy of every moved or deleted file, for example
+      Microsoft 365 work or school accounts with a <i>retention policy</i>. Then this step needs free space of about
+      <b style="display:inline">twice the size</b> of what's ${val.after_verify === "archive" ? "moved" : "deleted"}, and the job pauses when the account is full.
+      Not sure? Ask your IT department, or choose “Leave the original where it is”.${free}</div>`;
+  };
+  if (!remote) return render(null);
+  if (!(remote in ABOUT)) {
+    render(null);
+    ABOUT[remote] = api("GET", "about?path=" + encodeURIComponent(remote)).catch(e => ({ error: e.message }));
+  }
+  render(await ABOUT[remote]);
 }
 
 ACT["save-job"] = async el => {

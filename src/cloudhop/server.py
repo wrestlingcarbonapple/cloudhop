@@ -115,6 +115,8 @@ class App:
             case ("DELETE", "remotes", name):
                 self.rclone.delete_remote(name)
                 return {"ok": True}
+            case ("GET", "about"):
+                return self.rclone.about(query.get("path", [""])[0])
             case ("GET", "browse"):
                 return self.rclone.browse(query.get("path", [""])[0])
             case ("GET", "jobs"):
