@@ -1,0 +1,20 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Never commit credentials or local app data
+rclone.conf
+*.conf
+access-token
+data/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

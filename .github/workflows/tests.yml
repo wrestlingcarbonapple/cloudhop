@@ -1,0 +1,32 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install rclone (for the end-to-end tests)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux)   sudo apt-get update && sudo apt-get install -y rclone ;;
+            macOS)   brew install rclone ;;
+            Windows) choco install rclone -y --no-progress ;;
+          esac
+      - name: Check JavaScript syntax
+        if: runner.os == 'Linux'
+        run: node --check src/cloudhop/static/app.js
+      - run: uv run pytest -q

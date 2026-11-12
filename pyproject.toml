@@ -1,0 +1,35 @@
+[project]
+name = "cloudhop"
+version = "0.1.0"
+description = "A friendly web UI for moving files between cloud storage accounts with rclone: connections, scheduled jobs, verification and live monitoring."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "cloudhop contributors" }]
+keywords = ["rclone", "cloud", "migration", "backup", "onedrive", "google-drive", "sync"]
+classifiers = [
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Archiving :: Backup",
+]
+# No runtime dependencies: everything uses the Python standard library.
+dependencies = []
+
+[project.scripts]
+cloudhop = "cloudhop.app:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cloudhop"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
