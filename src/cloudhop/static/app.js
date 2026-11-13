@@ -40,7 +40,7 @@ function B(n) {
   if (n == null) return "–";
   const u = ["B", "KB", "MB", "GB", "TB", "PB"]; let i = 0;
   while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
-  return (i ? n.toFixed(n < 10 ? 2 : 1) : n) + " " + u[i];
+  return (i ? n.toFixed(n < 10 ? 2 : 1) : Math.round(n)) + " " + u[i];  // whole bytes: no long decimals
 }
 function D(s) {
   if (s == null) return "–";
