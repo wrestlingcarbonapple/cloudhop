@@ -81,6 +81,7 @@ DEFAULT_SETTINGS = {
     "rclone_config": "",      # empty: <data dir>/rclone.conf
     "max_concurrent_runs": 1,
     "keep_awake": True,
+    "disable_http2": True,  # a hung HTTP/2 connection can freeze every request of a transfer
 }
 
 
@@ -101,7 +102,7 @@ class Settings:
                 raise ValueError(f"Unknown setting: {key}")
             if key == "max_concurrent_runs":
                 value = max(1, min(8, int(value)))
-            elif key == "keep_awake":
+            elif key in ("keep_awake", "disable_http2"):
                 value = bool(value)
             else:
                 value = str(value).strip()

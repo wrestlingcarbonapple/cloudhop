@@ -36,6 +36,8 @@ QUOTA_RE = re.compile(r"quotaLimitReached|storageQuotaExceeded|insufficient ?sto
                       r"not enough (space|storage)|no space left|disk full|InsufficientStorage|507 Insufficient", re.I)
 FATAL_EXIT = (7, 8)  # rclone: fatal error (e.g. Drive upload limit) / --max-transfer reached
 LOG_TAIL_BYTES = 24_000
+STALL_SECONDS = 15 * 60   # no listing/checking/transfer progress for this long = hung
+STALL_RETRIES = 2
 
 
 class StopRun(Exception):
@@ -653,6 +655,17 @@ class RunManager:
                                         "--drive-acknowledge-abuse"])[0]
 
     def _rclone(self, run: Run, unit: dict, args: list[str], account: bool = False) -> tuple[int, dict | None]:
+        """Run one rclone command; restart it if it hangs without making any progress."""
+        for attempt in range(STALL_RETRIES + 1):
+            code, final, stalled = self._rclone_once(run, unit, args, account)
+            if not stalled:
+                return code, final
+            run.log(f"No progress for {STALL_SECONDS // 60} minutes; restarting this step "
+                    f"({attempt + 1}/{STALL_RETRIES})" if attempt < STALL_RETRIES else
+                    f"Still no progress after {STALL_RETRIES} restarts; giving up on this step")
+        raise RcloneError(f"rclone stopped making progress (hung connection?) during: {args[0]}")
+
+    def _rclone_once(self, run: Run, unit: dict, args: list[str], account: bool) -> tuple[int, dict | None, bool]:
         """Run one rclone command, streaming its JSON log into stats and the run log."""
         if run.cancel_event.is_set():
             raise Cancelled()
@@ -668,6 +681,18 @@ class RunManager:
         run.proc = proc
         prev_bytes = 0
         final = None
+        progress, watch = None, {"last": time.time(), "stalled": False}
+
+        def watchdog():
+            # Separate thread: also catches a process that goes completely silent
+            while proc.poll() is None:
+                if time.time() - watch["last"] > STALL_SECONDS:
+                    watch["stalled"] = True
+                    proc.terminate()
+                    return
+                time.sleep(min(10, STALL_SECONDS / 4))
+
+        threading.Thread(target=watchdog, daemon=True).start()
         for line in proc.stderr:
             try:
                 entry = json.loads(line)
@@ -677,6 +702,10 @@ class RunManager:
             stats = entry.get("stats")
             if stats:
                 final = stats
+                # Any movement in these counters counts as progress for the watchdog
+                now_progress = tuple(stats.get(k, 0) for k in ("bytes", "checks", "transfers", "listed", "deletes", "renames"))
+                if now_progress != progress:
+                    progress, watch["last"] = now_progress, time.time()
                 with run.lock:
                     run.live = {**stats, "unit": unit["name"], "phase": unit.get("phase"),
                                 "detail": unit.get("detail")}
@@ -702,7 +731,7 @@ class RunManager:
         run.proc = None
         if run.cancel_event.is_set():
             raise Cancelled()
-        return proc.returncode, final
+        return proc.returncode, final, watch["stalled"]
 
     @staticmethod
     def _check_quota(run: Run, code: int, where: str, action: str | None = None) -> None:

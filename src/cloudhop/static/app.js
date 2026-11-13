@@ -839,6 +839,7 @@ async function viewSettings() {
   <div class="card"><h2>Running jobs</h2>
     ${field("max_concurrent_runs", "Jobs allowed to run at the same time", st.max_concurrent_runs, "Others wait in line.", 'type="number" min="1" max="8"')}
     ${check("keep_awake", st.keep_awake, "Keep the computer awake while jobs run", "Stops the computer from going to sleep in the middle of a transfer.")}
+    ${check("disable_http2", st.disable_http2, "Avoid HTTP/2 connections (recommended)", "Prevents a rare hang where one stuck connection to a service (seen with OneDrive) freezes a whole transfer. A job that still stops making progress for 15 minutes is restarted automatically.")}
   </div>
   <button class="primary" data-act="save-settings">Save settings</button>`);
 }
@@ -847,6 +848,7 @@ ACT["save-settings"] = async () => {
   await api("POST", "settings", {
     rclone_path: v("rclone_path").value, rclone_config: v("rclone_config").value,
     max_concurrent_runs: +v("max_concurrent_runs").value || 1, keep_awake: v("keep_awake").checked,
+    disable_http2: v("disable_http2").checked,
   });
   await loadState();
   toast("Settings saved");

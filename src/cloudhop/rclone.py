@@ -146,7 +146,10 @@ class Rclone:
     # ---------------------------------------------------------------- running
 
     def base_cmd(self) -> list[str]:
-        return [self.require(), "--config", str(self.settings.rclone_config)]
+        cmd = [self.require(), "--config", str(self.settings.rclone_config)]
+        if self.settings.get("disable_http2"):
+            cmd.append("--disable-http2")
+        return cmd
 
     def run(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
         return subprocess.run(self.base_cmd() + list(args), capture_output=True, text=True,

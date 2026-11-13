@@ -134,3 +134,33 @@ def test_verify_while_copying_when_no_common_hash(env, monkeypatch):
     assert sum(u["files"] for u in run.d["units"]) == 5
     # The user's rclone config was not touched
     assert not (tmp / "data" / "rclone.conf").exists() or "hasher" not in (tmp / "data" / "rclone.conf").read_text()
+
+
+def test_watchdog_restarts_a_hung_step(env, monkeypatch, tmp_path):
+    import sys
+    import cloudhop.runner as runner_mod
+    from cloudhop.rclone import RcloneError
+    _, _, runs = env
+    # A fake rclone that keeps reporting the same stats forever, like a hung connection
+    fake = tmp_path / "hung.py"
+    fake.write_text("import json, sys, time\n"
+                    "while True:\n"
+                    "    print(json.dumps({'level': 'notice', 'msg': 'x', 'stats': {'bytes': 5, 'listed': 9}}),\n"
+                    "          file=sys.stderr, flush=True)\n"
+                    "    time.sleep(0.05)\n")
+    monkeypatch.setattr(runs.rclone, "base_cmd", lambda: [sys.executable, str(fake)])
+    monkeypatch.setattr(runner_mod, "STALL_SECONDS", 0.5)
+    run = Run(tmp_path, {"id": "w", "max_speed": 0, "transferred": 0, "days": {}})
+    run.folder.mkdir(exist_ok=True)
+    unit = {"name": "u", "phase": "transfer", "detail": ""}
+    started = time.time()
+    with pytest.raises(RcloneError, match="stopped making progress"):
+        runs._rclone(run, unit, ["copy", "a:", "b:"])
+    log = "\n".join(run.log_tail())
+    assert log.count("restarting this step") == 2 and "giving up" in log
+    assert time.time() - started < 15
+
+    # A process that goes completely silent is caught too
+    fake.write_text("import time\ntime.sleep(60)\n")
+    with pytest.raises(RcloneError, match="stopped making progress"):
+        runs._rclone(run, unit, ["copy", "a:", "b:"])
