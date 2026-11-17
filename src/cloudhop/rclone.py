@@ -198,6 +198,13 @@ class Rclone:
         dump = self.run_json("config", "dump")
         return [{"name": name, "type": conf.get("type", "?")} for name, conf in sorted(dump.items())]
 
+    def remote_type(self, path: str) -> str | None:
+        """Backend type of the connection a path is on ('drive', 'google photos', …)."""
+        if ":" not in path or path.startswith("/"):
+            return "local"
+        name = path.split(":", 1)[0]
+        return next((r["type"] for r in self.remotes() if r["name"] == name), None)
+
     def delete_remote(self, name: str) -> None:
         _check_name(name)
         proc = self.run("config", "delete", name)

@@ -22,6 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
+from cloudhop import photos
 from cloudhop.jobs import JobStore, extensions, join, next_run, split_remote, transfer_flags
 from cloudhop.rclone import NO_WINDOW, Rclone, RcloneError
 from cloudhop.store import DataDir, Settings, read_json, write_json
@@ -38,6 +39,7 @@ FATAL_EXIT = (7, 8)  # rclone: fatal error (e.g. Drive upload limit) / --max-tra
 LOG_TAIL_BYTES = 24_000
 STALL_SECONDS = 15 * 60   # no listing/checking/transfer progress for this long = hung
 STALL_RETRIES = 2
+PHOTOS_QUOTA_WAIT = 3 * 3600  # Google Photos daily quota: try again later
 
 
 class StopRun(Exception):
@@ -393,7 +395,9 @@ class RunManager:
                 run.save(force=True)
             if job["scan_sizes"]:
                 threading.Thread(target=self._scan_sizes, args=(run,), daemon=True).start()
-            self._plan_hasher(run)
+            run.photos = self.rclone.remote_type(job["destination"]) == photos.PHOTOS_TYPE
+            if not run.photos:
+                self._plan_hasher(run)
             failed = 0
             for unit in run.d["units"]:
                 if unit["status"] == "done":
@@ -402,7 +406,7 @@ class RunManager:
                     raise Cancelled()
                 try:
                     self._process_unit(run, unit)
-                except NeedsAttention:
+                except (NeedsAttention, photos.PhotosQuota):
                     run.set_unit(unit, status="pending", phase="")
                     raise
                 except (RcloneError, OSError) as e:
@@ -416,6 +420,8 @@ class RunManager:
             self._finish(run, "cancelled")
         except NeedsAttention as e:
             self._finish(run, "paused", str(e))
+        except photos.PhotosQuota as e:
+            self._finish(run, "quota", f"Google Photos daily limit reached ({e}); continuing automatically")
         except StopRun as e:
             self._finish(run, "failed", str(e))
         except Exception as e:
@@ -431,15 +437,18 @@ class RunManager:
                 if u["status"] == "running":
                     u["status"] = "pending"
             retry = status == "failed" and run.d["attempt"] <= job["retry_max"]
-            if retry:
+            if status == "quota":
+                run.d.update(status="waiting_retry", error=error, retry_at=time.time() + PHOTOS_QUOTA_WAIT)
+            elif retry:
                 run.d.update(status="waiting_retry", error=error,
                              retry_at=time.time() + job["retry_minutes"] * 60)
             elif status == "paused":
                 run.d.update(status="paused", error=error)
             else:
                 run.d.update(status=status, error=error, ended=time.time())
+        wait = (run.d["retry_at"] - time.time()) / 60 if run.d.get("retry_at") else 0
         run.log(f"Run {run.d['status']}" + (f": {error}" if error else "")
-                + (f" (retry in {job['retry_minutes']} min)" if run.d["status"] == "waiting_retry" else ""))
+                + (f" (retry in {wait:.0f} min)" if run.d["status"] == "waiting_retry" else ""))
         run.save(force=True)
         if run.d["status"] not in ("waiting_retry", "paused"):
             with self.lock:
@@ -500,6 +509,17 @@ class RunManager:
                           "filters": filter_flags(job, r)})
         run.set_unit(unit, status="running", error=None)
         run.log(f"== {unit['name']}")
+
+        if getattr(run, "photos", False):
+            ledger = photos.Ledger(self.data.root / "photos" / f"{split_remote(job['destination'])[0].rstrip(':')}.tsv")
+            try:
+                photos.upload_unit(self, run, unit, src, ledger, photos.destination_fs(job["destination"]))
+            except RuntimeError as e:
+                raise RcloneError(str(e))
+            if run.cancel_event.is_set():
+                raise Cancelled()
+            run.set_unit(unit, status="done", phase="", detail=f"{unit.get('files', 0)} uploaded")
+            return run.save(force=True)
 
         # Retry after a failed archive/delete step: the files are already verified,
         # so go straight to step 3 instead of transferring and verifying again.

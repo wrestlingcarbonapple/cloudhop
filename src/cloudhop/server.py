@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from cloudhop import __version__
+from cloudhop import __version__, photos
 from cloudhop.jobs import JobError, JobStore, next_run, validate_schedule
 from cloudhop.rclone import NO_WINDOW, Rclone, RcloneError, SetupSession
 from cloudhop.runner import RunManager
@@ -122,7 +122,8 @@ class App:
             case ("GET", "jobs"):
                 return self.jobs_overview()
             case ("POST", "jobs"):
-                return self.jobs.save(body)
+                dest_type = self.rclone.remote_type(str(body.get("destination", "")))
+                return self.jobs.save(body, photos.validate_photos_job if dest_type == photos.PHOTOS_TYPE else None)
             case ("POST", "jobs", "preview-schedule"):
                 when, upcoming = time.time(), []
                 sched = validate_schedule(body)

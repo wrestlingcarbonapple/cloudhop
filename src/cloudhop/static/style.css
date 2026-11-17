@@ -58,6 +58,8 @@ label.field > span { display: block; font-weight: 600; margin-bottom: 4px; }
   border-radius: 8px; margin: 6px 0; cursor: pointer; }
 .choice:has(input:checked) { border-color: var(--accent); }
 .choice b { display: block; }
+.choice.guide b { display: inline; }
+.choice.guide code { background: var(--bg); border-radius: 4px; padding: 2px 6px; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; }
 @media (max-width: 680px) { .grid2, .grid3 { grid-template-columns: 1fr; } }

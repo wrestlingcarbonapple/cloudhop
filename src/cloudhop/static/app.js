@@ -137,6 +137,9 @@ const ACT = {};
 document.addEventListener("click", e => {
   const el = e.target.closest("[data-act]");
   if (!el || el.disabled) return;
+  // The modal backdrop is an action itself (click outside closes); clicks on things
+  // inside the dialog must keep their normal behaviour (checkboxes, links, …)
+  if (el.dataset.act === "modal-bg" && e.target !== el) return;
   e.preventDefault();
   const fn = ACT[el.dataset.act];
   if (fn) Promise.resolve(fn(el, e)).catch(err => { if (err.message !== "locked") toast(err.message); });
@@ -442,14 +445,27 @@ async function viewJobEdit(id) {
     if (!found) return view("<h1>Job not found</h1>");
     job = JSON.parse(JSON.stringify(found));
   }
+  REMOTE_TYPES = Object.fromEntries((await api("GET", "remotes")).map(r => [r.name, r.type]));
   const s = job.schedule, days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const album = (job.destination.split(":")[1] || "").match(/^album\/(.+)$/);
   view(`<h1>${id ? "Edit job" : "New job"}</h1><form id="jobform" autocomplete="off">
   <div class="card"><h2>1. What and where</h2>
     ${field("name", "Name", job.name, "Anything that helps you recognise the job, e.g. “Photos to Google Drive”.", 'placeholder="My job" required')}
     ${pathField("source", "Copy from", job.source, "The connection and folder to read from. Use <b>Browse…</b> to pick one.")}
     ${pathField("destination", "Copy to", job.destination, "Where the files should end up. Folders are created automatically.")}
   </div>
-  <div class="card"><h2>2. How</h2>
+  <div class="card" id="photos-box"><h2>Google Photos</h2>
+    <p class="help" style="margin-top:0">Google Photos has no folders. Photos and videos from all sub-folders go into your library;
+      other files (and anything Google doesn't accept, like RAW sidecars or files over Google's size limits) are skipped.
+      Content that's already uploaded is never uploaded twice, and file names that occur more than once get their folder name in front.</p>
+    ${radio("ptarget", "library", album ? "album" : "library", "Into the library, without an album", "They appear in your photo timeline, sorted by the date they were taken.")}
+    ${radio("ptarget", "album", album ? "album" : "library", "Into one album", "")}
+    <div id="album-box" style="margin-left:30px">${field("album_name", "Album name", album ? album[1] : "", "", 'placeholder="e.g. Holiday 2019"')}</div>
+    ${check("photos_videos", job.photos_videos !== false, "Include videos", "Videos use a lot of storage; leave this off to send photos only.")}
+    <div class="banner warn small"><b>Uses your Google storage</b>Everything uploaded to Google Photos counts against your Google storage
+      at full quality, also if the same files are in Google Drive.</div>
+  </div>
+  <div class="card" id="sec-mode"><h2>2. How</h2>
     ${radio("mode", "copy", job.mode, "Copy (recommended)", "Copies new and changed files. Nothing is ever deleted at the destination.")}
     ${radio("mode", "sync", job.mode, "Mirror (sync)", "Makes the destination exactly like the source. <b>Files that are not in the source get deleted at the destination.</b>")}
     ${radio("mode", "move", job.mode, "Move", "Copies files and then deletes them from the source. No separate verification step.")}
@@ -472,9 +488,9 @@ async function viewJobEdit(id) {
     ${field("min_age", "Skip files changed within", job.min_age, "e.g. <span class=mono>1h</span> to leave files that are still being written.", 'placeholder="none"')}</div>
     <div class="grid2"><label class="field"><span>Only include</span><textarea name="include" placeholder="*.jpg&#10;Photos/**">${esc(job.include)}</textarea><div class="help">One pattern per line. Empty = everything.</div></label>
     <label class="field"><span>Leave out</span><textarea name="exclude" placeholder="*.tmp&#10;.DS_Store">${esc(job.exclude)}</textarea><div class="help">One pattern per line.</div></label></div>
-    <h3>Send some file types somewhere else</h3>
+    <div id="sec-routes"><h3>Send some file types somewhere else</h3>
     <div class="help">For example camera RAW files (cr2, nef, arw, dng) to their own folder. They keep the same sub-folders.</div>
-    <div id="routes"></div><button data-act="add-route">+ Add file-type rule</button>
+    <div id="routes"></div><button data-act="add-route">+ Add file-type rule</button></div>
   </div>
   <div class="card"><h2>5. When</h2>
     ${radio("stype", "manual", s.type, "Only when I press Run", "")}
@@ -512,7 +528,7 @@ async function viewJobEdit(id) {
   renderRoutes();
   const form = $("#jobform");
   form.addEventListener("change", () => syncJobForm());
-  form.addEventListener("input", e => { if (["every_value", "time"].includes(e.target.name)) syncJobForm(); });
+  form.addEventListener("input", e => { if (["every_value", "time", "album_name"].includes(e.target.name)) syncJobForm(); });
   form.addEventListener("submit", e => e.preventDefault());
   syncJobForm();
 }
@@ -546,6 +562,7 @@ function formValues() {
     scan_sizes: v("scan_sizes").checked, drive_stop_on_upload_limit: v("drive_stop_on_upload_limit").checked,
     transfers: +v("transfers").value || 4, checkers: +v("checkers").value || 8, tpslimit: +v("tpslimit").value || 0,
     extra_flags: v("extra_flags").value, enabled: v("enabled").checked,
+    photos_videos: v("photos_videos").checked,
     schedule: {
       type: f.querySelector("[name=stype]:checked").value,
       every_minutes: Math.max(5, (+v("every_value").value || 1) * unit),
@@ -556,8 +573,22 @@ function formValues() {
 }
 
 let previewTimer = null;
+let REMOTE_TYPES = {};
 function syncJobForm() {
-  const val = formValues(), f = $("#jobform");
+  const f = $("#jobform");
+  // Google Photos destination: own panel, and the options that don't apply are hidden
+  const destRemote = f.elements.destination.value.split(":")[0];
+  const isPhotos = REMOTE_TYPES[destRemote] === "google photos";
+  $("#photos-box").style.display = isPhotos ? "" : "none";
+  ["sec-mode", "sec-verify", "sec-routes"].forEach(id => { $("#" + id).style.display = isPhotos ? "none" : ""; });
+  if (isPhotos) {
+    f.querySelector("[name=mode][value=copy]").checked = true;
+    const toAlbum = f.querySelector("[name=ptarget]:checked").value === "album";
+    $("#album-box").style.display = toAlbum ? "" : "none";
+    const name = f.elements.album_name.value.trim().replace(/\//g, "-");
+    f.elements.destination.value = destRemote + ":" + (toAlbum && name ? "album/" + name : "");
+  }
+  const val = formValues();
   const move = val.mode === "move";
   $$("[name=verify]", f).forEach(r => { r.disabled = move; });
   if (move) f.querySelector("[name=verify][value=none]").checked = true;
@@ -723,7 +754,90 @@ function renderTypePicker(q) {
   input.focus(); input.setSelectionRange(q.length, q.length);
   input.addEventListener("input", () => renderTypePicker(input.value));
 }
-ACT["pick-type"] = el => { SETUP.type = SETUP.providers.find(p => p.name === el.dataset.type); renderTypeForm(false); };
+ACT["pick-type"] = el => {
+  SETUP.type = SETUP.providers.find(p => p.name === el.dataset.type);
+  GUIDES[SETUP.type.name] ? renderGuide(SETUP.type.name) : renderTypeForm(false);
+};
+
+/* ---------------------------------------------------------- setup checklists
+   Some services need preparation in their own web console before cloudhop can connect.
+   Each guide is a checklist with direct links and copy buttons; ticks are remembered. */
+
+const GC = "https://console.cloud.google.com";
+const googleSteps = (api, apiName, scopes) => [
+  { t: "Open Google Cloud and <b>create a project</b> (any name, e.g. “cloudhop”). Already made one for cloudhop or rclone? Select that one instead.", link: `${GC}/projectcreate` },
+  { t: `<b>Turn on the ${apiName}</b>: open the link and press <b>Enable</b>.`, link: `${GC}/apis/library/${api}` },
+  { t: "<b>Set up the login screen</b>: <i>Google Auth Platform → Get started</i>. App name: anything; your own email; Audience: <b>External</b>.", link: `${GC}/auth/overview` },
+  { t: "<b>Add yourself as a test user</b>: <i>Audience → Test users → Add users</i>, your own Google address.", link: `${GC}/auth/audience` },
+  { t: "<b>Allow the access cloudhop needs</b>: <i>Data access → Add or remove scopes</i>, paste these under “Manually add scopes”, then <b>Save</b>:", link: `${GC}/auth/scopes`, copy: scopes },
+  { t: "<b>Create the key</b>: <i>Clients → Create client</i>, type <b>Desktop app</b>, <b>Create</b>. Keep the window with the <b>Client ID</b> and <b>Client secret</b> open: you'll paste them in the next step.", link: `${GC}/auth/clients` },
+  { t: "<b>Recommended:</b> <i>Audience → Publish app</i>. While an app is “in testing”, Google logs you out every 7 days. A personal app needs no review; you'll just see an “unverified app” warning when logging in.", link: `${GC}/auth/audience` },
+];
+const GUIDES = {
+  "drive": {
+    title: "Google Drive: your own access key",
+    why: "Google Drive works without this, using rclone's shared key, but that key is shared by everyone and heavily rate-limited, which makes big jobs slow. Your own key takes about 10 minutes to make and is free.",
+    optional: true, skip: "Skip: use the shared key",
+    steps: googleSteps("drive.googleapis.com", "Google Drive API", ["https://www.googleapis.com/auth/drive"]),
+    after: "When logging in, Google may say the app isn't verified: choose <b>Advanced → Go to (your app)</b>. That's expected for your own app.",
+  },
+  "google photos": {
+    title: "Google Photos: your own access key (required)",
+    why: "Google Photos needs your own access key: rclone's shared key is being retired. Free, about 10 minutes. <b>Already made a project for Google Drive?</b> Then you only need steps 2 and 5 in that same project, and you can reuse its Client ID and secret.",
+    optional: false,
+    steps: googleSteps("photoslibrary.googleapis.com", "Photos Library API", [
+      "https://www.googleapis.com/auth/photoslibrary.appendonly",
+      "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
+      "https://www.googleapis.com/auth/photoslibrary.edit.appcreateddata"]),
+    after: "Good to know: Google only lets apps see photos they uploaded themselves, and uploads count against your Google storage at full quality.",
+  },
+  "onedrive": {
+    title: "Microsoft OneDrive",
+    why: "<b>Personal Microsoft account?</b> Nothing to prepare: skip this. <b>Work or school account?</b> Your organisation may have to approve the app first.",
+    optional: true, skip: "Skip: personal account or nothing to prepare",
+    steps: [
+      { t: "Try connecting first. If the Microsoft login says <b>“Need admin approval”</b>, ask your IT department to allow the app <b>rclone</b>, or to register an app for you (next steps)." },
+      { t: "IT/admin: <i>Entra admin center → App registrations → New registration</i>. Accounts in this organisation only; Redirect URI: platform <b>Web</b>, value:", link: "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade", copy: ["http://localhost:53682/"] },
+      { t: "<i>Certificates & secrets → New client secret</i>; <i>API permissions → Microsoft Graph → Delegated</i>: add these, then <b>Grant admin consent</b>:", copy: ["Files.ReadWrite.All", "offline_access"] },
+      { t: "In the next step paste the <b>Client ID</b> and <b>secret</b>, open <i>advanced options</i> and set <b>auth url</b> and <b>token url</b> with your tenant (directory) ID:", copy: ["https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/authorize", "https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token"] },
+      { t: "Moving or deleting files later? Work accounts often have a <b>retention policy</b> that keeps a copy of every moved or deleted file, so those steps can need extra free space. Choose “Leave the original where it is” if unsure." },
+    ],
+  },
+};
+
+function guideTicks(type) {
+  try { return JSON.parse(localStorage.getItem("cloudhop-guide-" + type) || "[]"); } catch (e) { return []; }
+}
+function renderGuide(type) {
+  const g = GUIDES[type], ticks = guideTicks(type), done = g.steps.filter((_, i) => ticks.includes(i)).length;
+  const all = done === g.steps.length;
+  openModal(`<h2>${esc(g.title)}</h2><p class="small">${g.why}</p>
+    <div class="small muted" style="margin:8px 0">${done} of ${g.steps.length} done</div>
+    <div class="bar small"><i style="width:${100 * done / g.steps.length}%"></i></div>
+    ${g.steps.map((st, i) => `<label class="choice guide"><input type="checkbox" data-guide-step="${i}" ${ticks.includes(i) ? "checked" : ""}>
+      <span class="small"><b style="display:inline">${i + 1}.</b> ${st.t}
+      ${st.copy ? st.copy.map(c => `<div class="row" style="margin-top:4px;flex-wrap:nowrap"><code class="mono path grow">${esc(c)}</code>
+        <button class="small" data-act="copy-text" data-text="${esc(c)}">Copy</button></div>`).join("") : ""}
+      ${st.link ? `<div style="margin-top:4px"><a href="${esc(st.link)}" target="_blank" rel="noopener">Open this page ↗</a></div>` : ""}</span></label>`).join("")}
+    ${g.after ? `<p class="small muted">${g.after}</p>` : ""}
+    <div class="row" style="margin-top:12px">
+      <button class="primary" data-act="guide-continue" ${all || g.optional ? "" : "disabled"}>${all ? "Done, continue" : g.optional ? "Continue" : "Tick all steps to continue"}</button>
+      ${g.optional ? `<button data-act="guide-skip">${esc(g.skip)}</button>` : ""}
+      <button data-act="add-remote">Back</button></div>`);
+  $$("[data-guide-step]", $("#modal")).forEach(c => c.addEventListener("change", () => {
+    const now = $$("[data-guide-step]:checked", $("#modal")).map(x => +x.dataset.guideStep);
+    try { localStorage.setItem("cloudhop-guide-" + type, JSON.stringify(now)); } catch (e) { /* not essential */ }
+    const scroll = $(".modal").scrollTop;
+    renderGuide(type);
+    $(".modal").scrollTop = scroll;
+  }));
+}
+ACT["guide-continue"] = () => renderTypeForm(false);
+ACT["guide-skip"] = () => renderTypeForm(false);
+ACT["copy-text"] = async el => {
+  try { await navigator.clipboard.writeText(el.dataset.text); toast("Copied"); }
+  catch (e) { toast("Couldn't copy; select the text and copy it yourself"); }
+};
 
 function optionInput(o, value, prefix = "opt-") {
   const id = prefix + o.name, val = value ?? o.default ?? "";

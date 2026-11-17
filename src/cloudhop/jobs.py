@@ -38,6 +38,7 @@ DEFAULT_JOB = {
     "tpslimit": 0,
     "drive_stop_on_upload_limit": False,
     "scan_sizes": True,           # measure the source first so progress and ETA are known
+    "photos_videos": True,        # Google Photos destination: include videos, not only photos
     "retry_minutes": 60,          # wait before retrying a failed run
     "retry_max": 0,               # 0 = don't retry
     "extra_flags": "",
@@ -133,7 +134,8 @@ def validate(raw: dict) -> dict:
             job[key] = max(lo, min(hi, int(job[key])))
         except (TypeError, ValueError):
             raise JobError(f"{key} must be a number")
-    for key in ("enabled", "batch_by_folder", "only_new", "drive_stop_on_upload_limit", "scan_sizes"):
+    for key in ("enabled", "batch_by_folder", "only_new", "drive_stop_on_upload_limit", "scan_sizes",
+                "photos_videos"):
         job[key] = bool(job[key])
     for key in ("include", "exclude"):
         job[key] = "\n".join(ln.strip() for ln in str(job[key] or "").splitlines() if ln.strip())
@@ -206,8 +208,10 @@ class JobStore:
     def get(self, job_id: str) -> dict | None:
         return self._jobs.get(job_id)
 
-    def save(self, raw: dict) -> dict:
+    def save(self, raw: dict, extra_validation=None) -> dict:
         job = validate(raw)
+        if extra_validation:
+            job = extra_validation(job)
         with self._lock:
             existing = self._jobs.get(raw.get("id") or "")
             job["id"] = existing["id"] if existing else "j" + uuid.uuid4().hex[:10]

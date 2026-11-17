@@ -9,6 +9,7 @@ OneDrive to Google Drive, Dropbox to a USB disk, a nightly backup of your photos
 - **Connections:** add your accounts with a few clicks (logging in happens in your browser), then test them.
 - **Jobs:** choose what to copy and where to, and whether to copy, mirror or move. Run it once or on a schedule.
 - **Checks every file:** after copying, cloudhop compares the files, so you know they arrived intact. It can then move or delete the originals for you.
+- **Google Photos too:** send photos and videos from any folder into your Google Photos library (or one album). Duplicates are skipped and name clashes are solved automatically.
 - **Pick which files:** only new files, files changed recently, include/leave-out patterns, or send certain file types (for example camera RAW files) to their own folder.
 - **Speed control:** set a bandwidth limit, for example slow during the day and full speed at night.
 - **Live progress:** see what's done, the speed, time remaining, and the files being copied right now.
@@ -64,6 +65,8 @@ The first start takes a minute: cloudhop downloads itself and rclone. Then **you
 2. Pick your service, for example **Microsoft OneDrive** or **Google Drive**.
 3. Give it a short name such as `onedrive` and press **Continue**. You can leave the other fields empty.
 4. A browser window opens where you log in and allow access. cloudhop continues by itself.
+
+   Some services need a little preparation first: **Google Photos** (required) and **Google Drive** (recommended, for speed) need your own free access key from Google's developer console. cloudhop shows a **step-by-step checklist** with direct links and copy buttons when you pick those services.
 5. Press **Test** to see that it works.
 
 Do the same for the second account.
@@ -99,6 +102,8 @@ Your connections, jobs and history are kept between starts.
 **Google Drive allows about 750 GB of uploads per day.** Tick *“Stop cleanly at Google Drive's daily upload limit”* and set *“Retry a failed run”* to, for example, 10 times with 60 minutes in between. cloudhop then continues the next day by itself.
 
 **A storage account is full.** cloudhop pauses the job and tells you which account to free space in. Some services keep deleted files in a recycle bin that still uses space. When there's room again, press **Resume**. Files that were already checked aren't checked again.
+
+**Google Photos.** Google Photos has no folders, so photos and videos from every sub-folder go into your library (or one album you name). Other files are skipped, such as RAW sidecars, documents, and photos over 200 MB or videos over 20 GB. Content that's already uploaded is never uploaded twice. Everything you upload counts against your Google storage at full quality, also when the same files are in Google Drive. Google limits uploads per day: cloudhop pauses and continues by itself.
 
 **Moving or deleting originals can need free space.** Moving files within an account is normally free. But accounts with a *retention policy* (common for Microsoft 365 work or school accounts) keep a copy of every moved or deleted file. Then *“Move the original to an ‘already copied’ folder”* and *“Delete the original”* need free space of about twice the size of what's moved. cloudhop warns about this when you set up the job, shows how much space the source has left, and pauses the job if the account fills up. If in doubt, choose *“Leave the original where it is”*.
 
